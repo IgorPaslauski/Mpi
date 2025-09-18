@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MPI-CQRS Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="container">
+      <h1>MPI-CQRS • Dashboard</h1>
+      <p class="sub">Mestre publica comandos (writes) → slaves consomem e gravam no Postgres. Consulta (sum) é broadcast + reduce.</p>
+    </header>
+
+    <main class="container grid">
+      <!-- Escrita -->
+      <section class="card" aria-labelledby="sec-write-title">
+        <div class="card-head">
+          <h2 id="sec-write-title">Escrita (Command)</h2>
+        </div>
+        <div class="row">
+          <label class="sr-only" for="valueInput">Valor inteiro</label>
+          <input id="valueInput" type="number" inputmode="numeric" placeholder="Digite um inteiro…" />
+          <button id="sendBtn">Enviar</button>
+        </div>
+        <p id="writeResult" class="muted" aria-live="polite"></p>
+      </section>
+
+      <!-- Consulta -->
+      <section class="card" aria-labelledby="sec-query-title">
+        <div class="card-head">
+          <h2 id="sec-query-title">Consulta (Query)</h2>
+          <div class="btns">
+            <button id="sumBtn">Somar tudo (Map-Reduce)</button>
+            <button id="statsBtn" class="secondary">Ver status dos slaves</button>
+          </div>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi">
+            <div class="kpi-label">Total</div>
+            <div id="kpiTotal" class="kpi-value">—</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Respostas</div>
+            <div id="kpiAnswered" class="kpi-value">—</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Timeout</div>
+            <div id="kpiTimeout" class="kpi-value">—</div>
+          </div>
+        </div>
+
+        <div class="panes">
+          <div>
+            <h3 class="pane-title">Detalhes</h3>
+            <pre id="sumResult" class="pre" role="status" aria-live="polite"></pre>
+          </div>
+          <div>
+            <h3 class="pane-title">Slaves</h3>
+            <pre id="statsResult" class="pre" role="status" aria-live="polite"></pre>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="container">
+      <small>Master serve este frontend e expõe <code>/api/write</code>, <code>/api/sum</code> e <code>/api/stats</code>.</small>
+    </footer>
+
+    <script>
+      const $ = s => document.querySelector(s);
+      const input = $("#valueInput");
+      const writeResult = $("#writeResult");
+      const sumResult = $("#sumResult");
+      const statsResult = $("#statsResult");
+      const kpiTotal = $("#kpiTotal");
+      const kpiAnswered = $("#kpiAnswered");
+      const kpiTimeout = $("#kpiTimeout");
+
+      async function postJSON(url, body) {
+        const r = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return r.json();
+      }
+      async function getJSON(url) {
+        const r = await fetch(url);
+        return r.json();
+      }
+
+      $("#sendBtn").addEventListener("click", async () => {
+        const v = Number(input.value);
+        writeResult.textContent = "";
+        if (!Number.isInteger(v)) {
+          writeResult.textContent = "Informe um inteiro.";
+          input.focus();
+          return;
+        }
+        try {
+          const data = await postJSON("/api/write", { value: v });
+          if (data.ok) {
+            writeResult.textContent = `OK! Valor ${v} publicado para processamento.`;
+            input.value = "";
+            input.focus();
+          } else {
+            writeResult.textContent = `Erro: ${data.error || "falha ao enviar"}`;
+          }
+        } catch (e) {
+          writeResult.textContent = `Erro de rede: ${e.message || e}`;
+        }
+      });
+
+      $("#sumBtn").addEventListener("click", async () => {
+        kpiTotal.textContent = "…";
+        kpiAnswered.textContent = "…";
+        kpiTimeout.textContent = "…";
+        sumResult.textContent = "Somando…";
+        try {
+          const data = await getJSON("/api/sum");
+          if (data.ok) {
+            kpiTotal.textContent = String(data.total);
+            kpiAnswered.textContent = `${data.answered}${data.expected ? "/" + data.expected : ""}`;
+            kpiTimeout.textContent = data.timeoutMs ? `${data.timeoutMs} ms` : "—";
+            sumResult.textContent = JSON.stringify(data, null, 2);
+          } else {
+            sumResult.textContent = `Erro: ${data.error || "falha ao somar"}`;
+            kpiTotal.textContent = "—";
+            kpiAnswered.textContent = "—";
+            kpiTimeout.textContent = "—";
+          }
+        } catch (e) {
+          sumResult.textContent = `Erro de rede: ${e.message || e}`;
+          kpiTotal.textContent = "—";
+          kpiAnswered.textContent = "—";
+          kpiTimeout.textContent = "—";
+        }
+      });
+
+      $("#statsBtn").addEventListener("click", async () => {
+        statsResult.textContent = "Carregando…";
+        try {
+          const data = await getJSON("/api/stats");
+          if (!data.ok) throw new Error(data.error || "falha");
+          const lines = (data.slaves || []).map(s => `Slave ${s.slave_id ?? s.id} • itens: ${s.items ?? s.size}`).join("\n");
+          statsResult.textContent = lines || "Sem dados.";
+        } catch (e) {
+          statsResult.textContent = `Erro: ${e.message || e}`;
+        }
+      });
+
+      // atalhos
+      input.addEventListener("keydown", ev => {
+        if (ev.key === "Enter") $("#sendBtn").click();
+      });
+    </script>
+  </body>
+</html>
